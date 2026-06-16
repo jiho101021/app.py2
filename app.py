@@ -30,11 +30,11 @@ genai.configure(api_key=api_key)
 @st.cache_data(show_spinner=False)
 def get_wiki_image(wiki_title):
     """위키피디아 영문 페이지 제목을 기반으로 메인 프로필 이미지를 가져옵니다."""
-    default_img = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png"
+    default_img = "[https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png](https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png)"
     if not wiki_title:
         return default_img
         
-    url = "https://en.wikipedia.org/w/api.php"
+    url = "[https://en.wikipedia.org/w/api.php](https://en.wikipedia.org/w/api.php)"
     params = {
         "action": "query",
         "titles": wiki_title,
@@ -61,7 +61,7 @@ def check_youtube_video(video_id):
     if not video_id or len(video_id) != 11:
         return False
     try:
-        url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        url = f"[https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=](https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=){video_id}&format=json"
         response = requests.get(url, timeout=3)
         return response.status_code == 200
     except Exception:
@@ -80,14 +80,12 @@ search_query = st.text_input("🔍 축구선수 이름을 입력하세요 (예: 
 if search_query:
     with st.spinner(f"'{search_query}' 선수의 데이터를 종합 분석 중입니다..."):
         
-        # 구형 버전을 위해 마크다운 백틱을 제거하고 순수 JSON만 주도록 프롬프트 강화
+        # JSON 출력을 명시하는 프롬프트
         prompt = f"""
         당신은 전 세계 축구선수 데이터베이스 전문가입니다. '{search_query}'에 대한 정확한 정보를 검색하여 제공된 JSON 형식으로 응답하세요.
         축구선수가 아니거나 정보를 완전히 찾을 수 없다면 {{"error": "not_found"}} 라고만 채워서 반환해야 합니다.
         
-        [중요] 응답은 마크다운 문법(```json ... ```)을 절대 포함하지 말고, 반드시 중괄호 {{}}로 시작하고 끝나는 순수한 JSON 문자열 하나만 반환하세요.
-        
-        반드시 아래 key 구조를 지켜야 합니다:
+        반드시 아래 key 구조를 지키는 올바른 JSON 포맷이어야 합니다:
         {{
             "error": "선수를 찾았다면 빈문자열 '', 못 찾았다면 'not_found'",
             "name_ko": "선수의 한국어 지정 이름",
@@ -104,22 +102,20 @@ if search_query:
         """
         
         try:
-            # 0.4.1 호환성을 위해 gemini-1.5-flash 모델명 안전빵 사용 및 config 옵션 수정
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # 1. 지원 가능한 최신 모델로 변경
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
-            # response_mime_type을 제거하고 호환되는 방식의 generation_config 사용
+            # 2. response_mime_type을 설정하여 AI가 무조건 순수 JSON만 뱉도록 강제
             response = model.generate_content(
                 prompt,
-                generation_config={"temperature": 0.2}
+                generation_config={
+                    "temperature": 0.2,
+                    "response_mime_type": "application/json"
+                }
             )
             
-            # AI 결과 텍스트 추출 및 불필요한 마크다운 코드 블록 정제 가드 처리
+            # response_mime_type 덕분에 불필요한 마크다운 기호가 없어 곧바로 로드가 가능합니다.
             clean_text = response.text.strip()
-            if clean_text.startswith("```"):
-                clean_text = clean_text.split("```json")[-1].split("```")[0].strip()
-            if clean_text.startswith("```"):
-                clean_text = clean_text.split("```")[-1].split("```")[0].strip()
-                
             player_data = json.loads(clean_text)
             
             if not player_data:

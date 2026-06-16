@@ -3,31 +3,32 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 
-# 1. 페이지 설정 및 디자인
-st.set_page_config(
-    page_title="마인드내비 - 일상 & 연애 자기관리",
-    page_icon="🌱",
-    layout="centered"
-)
+# ==========================================
+# 1. 페이지 설정 및 디자인 (다중 페이지 에러 방어)
+# ==========================================
+try:
+    st.set_page_config(
+        page_title="마인드내비 - 일상 & 연애 자기관리",
+        page_icon="🌱",
+        layout="centered"
+    )
+except st.errors.StreamlitAPIException:
+    # 멀티 페이지 환경에서 중복 호출 에러 발생 시 부드럽게 무시하고 통과
+    pass
 
 # 불필요한 테두리 스타일을 제거하고 깔끔하게 다듬은 CSS
+# (f-string 포맷팅 오류 방지를 위해 일반 문자열 처리 및 스트림릿 기본 요소에 결합)
 st.markdown("""
     <style>
     .stApp { background: linear-gradient(135deg, #FFF5F7 0%, #F4F7FF 100%); }
     .main-title { color: #4A4E69; font-size: 2.8rem !important; font-weight: 800; text-align: center; margin-bottom: 5px; }
     .sub-title { color: #666; text-align: center; font-size: 1.1rem; margin-bottom: 25px; }
-    .content-card {
-        background: rgba(255, 255, 255, 0.85);
-        border-radius: 15px;
-        padding: 20px;
-        border: 1px solid rgba(74, 78, 105, 0.15);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.04);
-        margin-bottom: 15px;
-        color: #2B2D42;
-    }
+    
+    /* 버튼 스타일 전역 강화 */
     .stButton>button {
-        background: linear-gradient(90deg, #4A4E69 0%, #9A8C98 100%);
-        color: white; border: none; border-radius: 10px; padding: 10px; font-weight: 600; width: 100%;
+        background: linear-gradient(90deg, #4A4E69 0%, #9A8C98 100%) !important;
+        color: white !important; border: none !important; border-radius: 10px !important; 
+        padding: 10px !important; font-weight: 600 !important; width: 100% !important;
     }
     .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(74, 78, 105, 0.3); }
     </style>
@@ -44,17 +45,18 @@ else:
 st.markdown("<h1 class='main-title'>🌱 마인드내비 (MindNavi)</h1>", unsafe_allow_html=True)
 st.markdown("<p class='sub-title'>일상의 무기력함부터 연애의 흔들림까지, 나를 지키는 자기관리</p>", unsafe_allow_html=True)
 
-# --- 🌡️ 실시간 마음 흔들림 온도계 ---
-st.markdown("<div class='content-card'>", unsafe_allow_html=True)
-st.markdown("#### 🌡️ 지금 나의 멘탈 흔들림 지수")
-anxiety_score = st.slider("현재 내 마음의 불안도나 스트레스는 어느 정도인가요?", 0, 100, 30)
-if anxiety_score >= 70:
-    st.error(f"🚨 **위험 (불안도 {anxiety_score}%)**: 감정 에너지가 과부하된 상태입니다. 즉시 하던 일을 멈추고 심호흡을 하세요.")
-elif anxiety_score >= 40:
-    st.warning(f"💛 **주의 (불안도 {anxiety_score}%)**: 서운함, 잡념, 혹은 무기력이 시작되고 있네요. 환기가 필요한 시점입니다.")
-else:
-    st.success(f"💚 **안정 (불안도 {anxiety_score}%)**: 일상과 감정의 밸런스가 아주 좋습니다. 이 상태을 유지해보세요!")
-st.markdown("</div>", unsafe_allow_html=True)
+# --- 🌡️ 실시간 마음 흔들림 온도계 (st.container를 사용하여 레이아웃 크래시 방지) ---
+with st.container(border=True):
+    st.markdown("#### 🌡️ 지금 나의 멘탈 흔들림 지수")
+    anxiety_score = st.slider("현재 내 마음의 불안도나 스트레스는 어느 정도인가요?", 0, 100, 30)
+    if anxiety_score >= 70:
+        st.error(f"🚨 **위험 (불안도 {anxiety_score}%)**: 감정 에너지가 과부하된 상태입니다. 즉시 하던 일을 멈추고 심호흡을 하세요.")
+    elif anxiety_score >= 40:
+        st.warning(f"💛 **주의 (불안도 {anxiety_score}%)**: 서운함, 잡념, 혹은 무기력이 시작되고 있네요. 환기가 필요한 시점입니다.")
+    else:
+        st.success(f"💚 **안정 (불안도 {anxiety_score}%)**: 일상과 감정의 밸런스가 아주 좋습니다. 이 상태을 유지해보세요!")
+
+st.write("") # 공백 추가
 
 # 4. 기능별 대시보드 탭 구성
 tab1, tab2, tab3, tab4 = st.tabs(["🔥 일상 해결", "💘 연애 해결", "📊 멘탈 성향 테스트", "🤖 AI 상담소"])
@@ -99,13 +101,12 @@ with tab2:
         if st.button("🤬 사소한 일에 서운해요"): st.info(love_problems[keys_love[1]])
         if st.button("💔 이별 후 미련이 남아요"): st.info(love_problems[keys_love[3]])
 
-# 탭 3: MBTI 스타일 연애 멘탈 유형 테스트 (빈 테두리 완벽 제거 버젼)
+# 탭 3: MBTI 스타일 연애 멘탈 유형 테스트
 with tab3:
     st.markdown("### 📊 내 연애 멘탈 & 자존감 MBTI 테스트")
     st.write("4가지 질문에 솔직하게 답하고 나의 '연애 자기관리 유형'을 확인해보세요!")
     st.write("---")
 
-    # 세션 상태 변수 초기화
     if 'result_type' not in st.session_state:
         st.session_state.result_type = None
 
@@ -133,26 +134,25 @@ with tab3:
     if st.button("✨ 내 유형 결과 보기"):
         choices = [q1, q2, q3, q4]
         a_count = sum([1 for c in choices if c.startswith("A")])
-        
-        # 번잡한 HTML 태그를 모두 없애고 결과의 번호만 세션에 깔끔하게 저장
         st.session_state.result_type = a_count
 
-    # 결과가 있을 때만 Streamlit 내부 기본 제공 컴포넌트로 예쁘게 출력
     if st.session_state.result_type is not None:
         res = st.session_state.result_type
         st.write("---")
         st.markdown("### 🧬 당신의 연애 멘탈 진단 결과")
         
-        if res == 4:
-            st.error("🚨 **유형: [LOVE-A] 감정 올인형 러버**\n\n상대방이 삶의 중심이 되어 있어 자존감이 쉽게 흔들리는 타입입니다. 상대방의 연락 한 통에 하루의 기분이 결정되곤 해요. \n\n**지금 필요한 자기관리:** 타인에게 집중된 시선을 의도적으로 나 자신에게 돌리는 '중심 잡기' 연습이 시급합니다!")
-        elif res == 3 or res == 2:
-            st.warning("💛 **유형: [LOVE-S] 눈치 서운형 러버**\n\n독립적으로 행동하고 싶지만 마음 한편으론 끊임없이 불안함과 서운함을 느끼는 타입입니다. 혼자 삭히다가 오해가 깊어질 수 있어요. \n\n**지금 필요한 자기관리:** 서운한 감정이 들 때는 메모장에 생각을 먼저 정리한 뒤, 팩트 기반으로 건강하게 소통하는 연습을 해보세요.")
-        elif res == 1:
-            st.info("🧱 **유형: [LOVE-I] 철벽 고립형 러버**\n\n상처받기 싫어서 마음을 깊게 주지 않거나, 지나치게 쿨한 척 벽을 치는 타입일 수 있습니다. 자기관리는 잘 되지만 관계의 깊이가 아쉬울 수 있어요. \n\n**지금 필요한 자기관리:** 가끔은 내 약한 모습을 솔직하게 털어놓으며 상대방을 신뢰하는 연습을 해보세요.")
-        else:
-            st.success("💚 **유형: [LOVE-G] 멘탈 단단형 갓생러**\n\n나 자신을 사랑할 줄 알고 연인과도 건강한 거리를 유지하는 완벽한 밸런스의 소유자입니다! 연애 때문에 일상을 망치지 않는 자존감 끝판왕이시네요. \n\n**지금 필요한 자기관리:** 지금처럼 나만의 루틴을 유지하며 예쁜 사랑을 이어가세요.")
+        # 내부 컨테이너로 깔끔하게 묶어 출력
+        with st.container(border=True):
+            if res == 4:
+                st.error("🚨 **유형: [LOVE-A] 감정 올인형 러버**\n\n상대방이 삶의 중심이 되어 있어 자존감이 쉽게 흔들리는 타입입니다. 상대방의 연락 한 통에 하루의 기분이 결정되곤 해요. \n\n**지금 필요한 자기관리:** 타인에게 집중된 시선을 의도적으로 나 자신에게 돌리는 '중심 잡기' 연습이 시급합니다!")
+            elif res == 3 or res == 2:
+                st.warning("💛 **유형: [LOVE-S] 눈치 서운형 러버**\n\n독립적으로 행동하고 싶지만 마음 한편으론 끊임없이 불안함และ 서운함을 느끼는 타입입니다. 혼자 삭히다가 오해가 깊어질 수 있어요. \n\n**지금 필요한 자기관리:** 서운한 감정이 들 때는 메모장에 생각을 먼저 정리한 뒤, 팩트 기반으로 건강하게 소통하는 연습을 해보세요.")
+            elif res == 1:
+                st.info("🧱 **유형: [LOVE-I] 철벽 고립형 러버**\n\n상처받기 싫어서 마음을 깊게 주지 않거나, 지나치게 쿨한 척 벽을 치는 타입일 수 있습니다. 자기관리는 잘 되지만 관계의 깊이가 아쉬울 수 있어요. \n\n**지금 필요한 자기관리:** 가끔은 내 약한 모습을 솔직하게 털어놓으며 상대방을 신뢰하는 연습을 해보세요.")
+            else:
+                st.success("💚 **유형: [LOVE-G] 멘탈 단단형 갓생러**\n\n나 자신을 사랑할 줄 알고 연인과도 건강한 거리를 유지하는 완벽한 밸런스의 소유자입니다! 연애 때문에 일상을 망치지 않는 자존감 끝판왕이시네요. \n\n**지금 필요한 자기관리:** 지금처럼 나만의 루틴을 유지하며 예쁜 사랑을 이어가세요.")
 
-# 탭 4: 예외 상황 맞춤형 AI 코칭 (gemini-2.5-flash-lite)
+# 탭 4: 예외 상황 맞춤형 AI 코칭
 with tab4:
     st.markdown("### 🤖 무엇이든 물어보는 AI 자기관리 코치")
     st.write("일상의 무기력, 일 관리 슬럼프부터 테스트 결과에 대한 깊은 고민, 아무에게도 말 못 할 미묘한 연애 상황까지 적어주세요.")
@@ -175,8 +175,11 @@ with tab4:
                         contents=user_query,
                         config=types.GenerateContentConfig(system_instruction=prompt)
                     )
-                    # AI 상담 창도 테두리 제거하고 가독성 좋은 흰색 카드형태로 깔끔히 노출
-                    st.markdown(f"<div class='content-card' style='border-left:5px solid #4A4E69; background-color:#FFFDFD;'>{response.text}</div>", unsafe_allow_html=True)
+                    
+                    # 마크다운 문법이 완벽히 적용되도록 st.container 안에서 st.markdown으로 출력
+                    with st.container(border=True):
+                        st.markdown(response.text)
+                        
                 except APIError as e:
                     st.error(f"Gemini API 오류가 발생했습니다: {e.message}")
                 except Exception as e:

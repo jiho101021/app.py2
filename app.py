@@ -1,111 +1,206 @@
 import streamlit as st
 import google.generativeai as genai
-from PIL import Image
-import io
+import requests
+import json
+import re
 
+# ==========================================
+# 1. 페이지 설정
+# ==========================================
 st.set_page_config(
-    page_title="StyleMatch AI",
-    page_icon="👗",
-    layout="centered",
-    initial_sidebar_state="expanded"
+    page_title="글로벌 축구선수 백과사전 + 하이라이트",
+    page_icon="⚽",
+    layout="wide"
 )
 
-st.title("👗 StyleMatch AI")
-st.markdown("**당신의 외모와 분위기에 딱 맞는 스타일 추천**")
-st.caption("Gemini 2.5 Flash Lite • 이미지 업로드 지원")
+# ==========================================
+# 2. API 설정 및 검증
+# ==========================================
+api_key = st.secrets.get("GEMINI_API_KEY")
 
-# API Key 설정
-if "GEMINI_API_KEY" not in st.secrets:
-    st.error("🚨 **Secrets 설정 오류**: Streamlit Secrets에 `GEMINI_API_KEY`를 추가해주세요.")
-    st.info("배포 후 Advanced Settings → Secrets에서 설정하세요.")
+if not api_key:
+    st.error("🚨 GEMINI_API_KEY가 설정되지 않았습니다. Streamlit Secrets 설정을 확인해주세요.")
     st.stop()
 
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-except Exception as e:
-    st.error(f"API 키 설정 중 오류 발생: {str(e)}")
-    st.stop()
+# Gemini API 구성
+genai.configure(api_key=api_key)
+# 빠르고 가벼우며 비용 효율적인 gemini-2.5-flash-lite 모델 사용
+model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
-# 모델 초기화
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash-lite",
-    system_instruction="""
-    너는 10년 이상 경력의 전문 패션 스타일리스트이자 퍼스널 컬러 컨설턴트다.
-    사용자의 얼굴형, 체형, 피부톤, 머리색, 분위기, 라이프스타일 등을 종합적으로 분석해서
-    실용적이고 구체적인 스타일 추천을 해준다. 한국어로 친근하고 명확하게 답변한다.
-    """
-)
-
-# 세션 상태
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "chat" not in st.session_state:
-    st.session_state.chat = model.start_chat(history=[])
-
-# 사이드바
-with st.sidebar:
-    st.header("💡 사용 방법")
-    st.markdown("""
-    1. **사진 업로드** (선택)
-    2. 얼굴형, 체형, 피부톤, 머리색, 원하는 무드 등을 입력
-    3. AI가 맞춤형 스타일 추천
-    """)
+# ==========================================
+# 3. 안정성을 위한 보조 함수들 (예외 처리 포함)
+# ==========================================
+@st.cache_data(show_spinner=False)
+def get_wiki_image(wiki_title):
+    """위키피디아 영문 페이지 제목을 기반으로 메인 프로필 이미지를 가져옵니다."""
+    if not wiki_title:
+        return "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png"
+        
+    url = "https://en.wikipedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "titles": wiki_title,
+        "prop": "pageimages",
+        "format": "json",
+        "pithumbsize": 600
+    }
     
-    if st.button("🗑️ 대화 초기화"):
-        st.session_state.messages = []
-        st.session_state.chat = model.start_chat(history=[])
-        st.rerun()
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        if response.status_code == 200:
+            pages = response.json().get("query", {}).get("pages", {})
+            for page_id, page_info in pages.items():
+                if "thumbnail" in page_info:
+                    return page_info["thumbnail"]["source"]
+    except Exception:
+        pass
+    
+    # 에러 발생 시 기본 이미지 반환 (앱이 멈추는 것을 방지)
+    return "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png"
 
-# 이전 대화 표시
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+@st.cache_data(show_spinner=False)
+def check_youtube_video(video_id):
+    """유튜브 비디오 ID가 실제로 존재하는지 체크합니다."""
+    if not video_id or len(video_id) != 11:
+        return False
+    try:
+        url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        response = requests.get(url, timeout=3)
+        return response.status_code == 200
+    except Exception:
+        return False
 
-# 이미지 업로드
-uploaded_file = st.file_uploader("📸 얼굴 사진 업로드 (선택)", type=["jpg", "jpeg", "png"])
+def extract_json(text):
+    """AI 텍스트 출력물에서 순수 JSON 데이터만 안전하게 추출합니다."""
+    try:
+        # ```json ... ``` 형태 안의 문자열 추출 시도
+        match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        
+        # 일반 백틱 ``` ... ``` 형태 추출 시도
+        match_general = re.search(r'```\s*(\{.*?\})\s*```', text, re.DOTALL)
+        if match_general:
+            return json.loads(match_general.group(1))
+            
+        # 백틱이 없는 경우 중괄호 시작과 끝을 찾아 파싱 시도
+        match_braces = re.search(r'(\{.*\})', text, re.DOTALL)
+        if match_braces:
+            return json.loads(match_braces.group(1))
+            
+        return json.loads(text)
+    except Exception:
+        return None
 
-# 사용자 입력
-if prompt := st.chat_input("외모와 분위기를 자세히 알려주세요..."):
-    user_message = prompt
-    
-    # 이미지 처리
-    image_parts = []
-    display_image = None
-    if uploaded_file:
-        image = Image.open(uploaded_file)
-        image_parts = [image]
-        display_image = image
-    
-    # 사용자 메시지 표시
-    with st.chat_message("user"):
-        st.markdown(prompt)
-        if display_image:
-            st.image(display_image, width=300)
-    
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # AI 응답
-    with st.chat_message("assistant"):
-        with st.spinner("분석하고 추천 중입니다..."):
-            try:
-                if image_parts:
-                    response = st.session_state.chat.send_message([prompt] + image_parts)
-                else:
-                    response = st.session_state.chat.send_message(prompt)
+# ==========================================
+# 4. 메인 UI 화면 구성
+# ==========================================
+st.title("⚽ 글로벌 축구선수 종합 리포트 및 하이라이트")
+st.markdown("전 세계 어느 축구선수든 이름을 검색하면 **프로필, 스탯, 수상 기록**과 **최고의 순간 동영상**을 바로 확인할 수 있습니다.")
+st.divider()
+
+# 검색창 입력 (엔터를 치거나 버튼을 누르면 작동)
+search_query = st.text_input("🔍 축구선수 이름을 입력하세요 (예: 손흥민, 이강인, Lionel Messi, Pele)", placeholder="선수 이름 입력 후 Enter")
+
+if search_query:
+    with st.spinner(f"'{search_query}' 선수의 데이터를 종합 분석 중입니다..."):
+        
+        # 엄격한 JSON 반환 유도를 위한 프롬프트 고도화
+        prompt = f"""
+        당신은 전 세계 축구선수 데이터베이스 전문가입니다. '{search_query}'에 대한 정확한 정보를 검색하여 반드시 제공된 JSON 형식으로만 응답하세요.
+        축구선수가 아니거나 정보를 완전히 찾을 수 없다면 {{"error": "not_found"}} 만 반환하세요.
+        
+        응답은 반드시 아래의 key를 가진 완벽한 JSON 형태여야 합니다:
+        {{
+            "name_ko": "선수의 한국어 지정 이름",
+            "wiki_en_title": "선수의 정확한 영문 위키피디아 문서 제목 (예: Son Heung-min, Lionel Messi)",
+            "nationality": "국적",
+            "age": "현재 나이 또는 생년월일",
+            "total_goals": "프로 통산 골 수 (예: 200+)",
+            "career_clubs": "소속팀 커리어 목록 (콤마로 구분)",
+            "summary": "선수 스타일 및 업적 요약 (한국어, 2~3줄)",
+            "individual_awards": ["주요 개인 수상 기록 1", "주요 개인 수상 기록 2"],
+            "club_awards": ["주요 클럽 우승 기록 1", "주요 클럽 우승 기록 2"],
+            "best_moments_youtube_id": "선수의 하이라이트 유튜브 영상의 11자리 비디오 ID (예: '_mD55J7O7sU'). 신뢰할 수 있는 ID가 없다면 빈 문자열"
+        }}
+        """
+        
+        try:
+            # AI 모델 호출
+            response = model.generate_content(prompt)
+            player_data = extract_json(response.text)
+            
+            if not player_data:
+                st.error("🤖 AI가 일시적으로 불안정한 데이터를 응답했습니다. 잠시 후 다시 검색해 주세요.")
+            elif player_data.get("error") == "not_found":
+                st.warning("❌ 해당 이름의 축구선수 정보를 찾을 수 없습니다. 이름이나 스펠링을 다시 확인해 주세요.")
+            else:
+                # 1. 위키피디아 이미지 URL 가져오기
+                image_url = get_wiki_image(player_data.get("wiki_en_title"))
                 
-                assistant_response = response.text
-                st.markdown(assistant_response)
+                # 2. 화면 레이아웃 분할 (좌측: 프로필 사진 / 우측: 스탯 및 상세정보)
+                col1, col2 = st.columns([1, 2.2])
                 
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": assistant_response
-                })
-                
-            except Exception as e:
-                error_msg = f"❌ 오류 발생: {str(e)}"
-                st.error(error_msg)
-                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                with col1:
+                    st.image(image_url, caption=player_data.get("wiki_en_title"), use_container_width=True)
+                    
+                with col2:
+                    st.header(player_data.get("name_ko", search_query))
+                    st.markdown(f"**🌐 국적:** {player_data.get('nationality', '정보 없음')}")
+                    
+                    # 주요 Metric 대시보드
+                    sub_col1, sub_col2 = st.columns(2)
+                    sub_col1.metric(label="🎂 나이 / 생년월일", value=player_data.get("age", "정보 없음"))
+                    sub_col2.metric(label="🥅 통산 골 수", value=player_data.get("total_goals", "정보 없음"))
+                    st.divider()
 
-st.markdown("---")
-st.caption("Powered by Gemini 2.5 Flash Lite | Made for Streamlit Community Cloud")
+                    # 3. 탭 구성 (정보 요약, 커리어/수상, 동영상 하이라이트)
+                    tab1, tab2, tab3 = st.tabs(["📝 선수 요약 및 수상", "🛡️ 클럽 커리어", "📺 최고의 순간 영상"])
+                    
+                    with tab1:
+                        st.subheader("선수 소개")
+                        st.write(player_data.get("summary", "소개 정보가 없습니다."))
+                        
+                        st.divider()
+                        
+                        ind_awards = player_data.get("individual_awards", [])
+                        club_awards = player_data.get("club_awards", [])
+                        
+                        a_col1, a_col2 = st.columns(2)
+                        with a_col1:
+                            st.subheader("🏅 개인 수상 기록")
+                            if ind_awards and isinstance(ind_awards, list):
+                                for award in ind_awards:
+                                    st.markdown(f"- {award}")
+                            else:
+                                st.write("개인 수상 정보가 없습니다.")
+                                
+                        with a_col2:
+                            st.subheader("🏆 클럽 수상 기록")
+                            if club_awards and isinstance(club_awards, list):
+                                for award in club_awards:
+                                    st.markdown(f"- {award}")
+                            else:
+                                st.write("클럽 수상 정보가 없습니다.")
+                            
+                    with tab2:
+                        st.subheader("⚽ 소속팀 커리어 히스토리")
+                        clubs = player_data.get("career_clubs", "정보 없음")
+                        st.info(clubs)
+                        
+                    with tab3:
+                        st.subheader("📺 AI가 추천하는 최고의 플레이")
+                        video_id = player_data.get("best_moments_youtube_id")
+                        
+                        if video_id and check_youtube_video(video_id):
+                            # 유효한 비디오 ID인 경우 정상 재생
+                            st.video(f"https://www.youtube.com/watch?v={video_id}")
+                        else:
+                            # 유효하지 않거나 비어있는 경우, 검색 대체 링크 제공 (에러 방지 핵심)
+                            search_keyword = player_data.get('wiki_en_title', search_query)
+                            search_url = f"https://www.youtube.com/results?search_query={search_keyword}+best+moments+highlights"
+                            st.warning("⚠️ 특정 동영상을 직접 재생할 수 없습니다. 대신 안전하게 찾아보실 수 있도록 유튜브 검색 링크를 제공합니다.")
+                            st.markdown(f"👉 [**YouTube에서 '{player_data.get('name_ko')} 하이라이트' 직접 보기**]({search_url})")
+                            
+        except Exception as e:
+            st.error(f"데이터를 처리하는 도중 예상치 못한 오류가 발생했습니다. 잠시 후 다시 시도해 주세요. (오류 내용: {e})")

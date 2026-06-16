@@ -4,10 +4,18 @@ import time
 from datetime import datetime
 import google.generativeai as genai
 
-# 페이지 설정
-st.set_page_config(page_title="나만의 시간 관리 뷔페", page_icon="⏳", layout="wide")
+# ==========================================
+# 1. 페이지 설정 (다중 페이지 에러 방어)
+# ==========================================
+try:
+    st.set_page_config(page_title="나만의 시간 관리 뷔페", page_icon="⏳", layout="wide")
+except st.errors.StreamlitAPIException:
+    # 메인 app.py에서 이미 호출된 경우, 서브 페이지에서의 중복 호출 에러를 무시하고 넘어갑니다.
+    pass
 
-# 세션 상태 초기화 (데이터 유지용)
+# ==========================================
+# 2. 세션 상태 초기화 (데이터 유지용)
+# ==========================================
 if 'tasks' not in st.session_state:
     st.session_state.tasks = []
 if 'time_blocks' not in st.session_state:
@@ -155,7 +163,11 @@ def main():
             else:
                 try:
                     # Streamlit Secrets에서 API 키 가져오기
-                    api_key = st.secrets["GEMINI_API_KEY"]
+                    api_key = st.secrets.get("GEMINI_API_KEY")
+                    if not api_key:
+                        st.error("⚠️ Secrets에 `GEMINI_API_KEY`가 설정되지 않았습니다.")
+                        st.stop()
+                        
                     genai.configure(api_key=api_key)
                     
                     # Gemini 2.5 Flash Lite 모델 설정
@@ -174,8 +186,6 @@ def main():
                         st.success("코칭 완료!")
                         st.markdown(f"> {response.text}")
                         
-                except KeyError:
-                    st.error("⚠️ Streamlit Secrets에 `GEMINI_API_KEY`가 설정되지 않았습니다.")
                 except Exception as e:
                     st.error(f"⚠️ 오류가 발생했습니다: {str(e)}")
 

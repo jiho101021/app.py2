@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import requests
 import json
 
@@ -21,8 +22,8 @@ if not api_key:
     st.error("🚨 GEMINI_API_KEY가 설정되지 않았습니다. Streamlit Secrets 설정을 확인해주세요.")
     st.stop()
 
-# Gemini API 구성
-genai.configure(api_key=api_key)
+# 최신 google-genai 클라이언트 초기화
+client = genai.Client(api_key=api_key)
 
 # ==========================================
 # 3. 안정성을 위한 보조 함수들 (예외 처리 포함)
@@ -30,11 +31,11 @@ genai.configure(api_key=api_key)
 @st.cache_data(show_spinner=False)
 def get_wiki_image(wiki_title):
     """위키피디아 영문 페이지 제목을 기반으로 메인 프로필 이미지를 가져옵니다."""
-    default_img = "[https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png](https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png)"
+    default_img = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png"
     if not wiki_title:
         return default_img
         
-    url = "[https://en.wikipedia.org/w/api.php](https://en.wikipedia.org/w/api.php)"
+    url = "https://en.wikipedia.org/w/api.php"
     params = {
         "action": "query",
         "titles": wiki_title,
@@ -61,7 +62,7 @@ def check_youtube_video(video_id):
     if not video_id or len(video_id) != 11:
         return False
     try:
-        url = f"[https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=](https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=){video_id}&format=json"
+        url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
         response = requests.get(url, timeout=3)
         return response.status_code == 200
     except Exception:
@@ -80,7 +81,6 @@ search_query = st.text_input("🔍 축구선수 이름을 입력하세요 (예: 
 if search_query:
     with st.spinner(f"'{search_query}' 선수의 데이터를 종합 분석 중입니다..."):
         
-        # JSON 출력을 명시하는 프롬프트
         prompt = f"""
         당신은 전 세계 축구선수 데이터베이스 전문가입니다. '{search_query}'에 대한 정확한 정보를 검색하여 제공된 JSON 형식으로 응답하세요.
         축구선수가 아니거나 정보를 완전히 찾을 수 없다면 {{"error": "not_found"}} 라고만 채워서 반환해야 합니다.
@@ -102,21 +102,18 @@ if search_query:
         """
         
         try:
-            # 1. 지원 가능한 최신 모델로 변경
-            model = genai.GenerativeModel('gemini-2.5-flash')
-            
-            # 2. response_mime_type을 설정하여 AI가 무조건 순수 JSON만 뱉도록 강제
-            response = model.generate_content(
-                prompt,
-                generation_config={
-                    "temperature": 0.2,
-                    "response_mime_type": "application/json"
-                }
+            # 최신 google-genai 라이브러리 호출 방식 적용
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    response_mime_type="application/json" # 이제 최신 라이브러리라 정상 작동합니다!
+                )
             )
             
-            # response_mime_type 덕분에 불필요한 마크다운 기호가 없어 곧바로 로드가 가능합니다.
-            clean_text = response.text.strip()
-            player_data = json.loads(clean_text)
+            # 응답 텍스트 파싱
+            player_data = json.loads(response.text)
             
             if not player_data:
                 st.error("🤖 AI가 일시적으로 불안정한 데이터를 응답했습니다. 잠시 후 다시 검색해 주세요.")

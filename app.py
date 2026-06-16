@@ -80,10 +80,12 @@ search_query = st.text_input("🔍 축구선수 이름을 입력하세요 (예: 
 if search_query:
     with st.spinner(f"'{search_query}' 선수의 데이터를 종합 분석 중입니다..."):
         
-        # 엄격한 JSON 스키마 가이드 및 프롬프트
+        # 구형 버전을 위해 마크다운 백틱을 제거하고 순수 JSON만 주도록 프롬프트 강화
         prompt = f"""
         당신은 전 세계 축구선수 데이터베이스 전문가입니다. '{search_query}'에 대한 정확한 정보를 검색하여 제공된 JSON 형식으로 응답하세요.
         축구선수가 아니거나 정보를 완전히 찾을 수 없다면 {{"error": "not_found"}} 라고만 채워서 반환해야 합니다.
+        
+        [중요] 응답은 마크다운 문법(```json ... ```)을 절대 포함하지 말고, 반드시 중괄호 {{}}로 시작하고 끝나는 순수한 JSON 문자열 하나만 반환하세요.
         
         반드시 아래 key 구조를 지켜야 합니다:
         {{
@@ -102,14 +104,23 @@ if search_query:
         """
         
         try:
-            # response_mime_type을 사용하여 안정적인 JSON 출력 보장
-            model = genai.GenerativeModel(
-                'gemini-2.5-flash-lite',
-                generation_config={"response_mime_type": "application/json"}
+            # 0.4.1 호환성을 위해 gemini-1.5-flash 모델명 안전빵 사용 및 config 옵션 수정
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # response_mime_type을 제거하고 호환되는 방식의 generation_config 사용
+            response = model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.2}
             )
             
-            response = model.generate_content(prompt)
-            player_data = json.loads(response.text)
+            # AI 결과 텍스트 추출 및 불필요한 마크다운 코드 블록 정제 가드 처리
+            clean_text = response.text.strip()
+            if clean_text.startswith("```"):
+                clean_text = clean_text.split("```json")[-1].split("```")[0].strip()
+            if clean_text.startswith("```"):
+                clean_text = clean_text.split("```")[-1].split("```")[0].strip()
+                
+            player_data = json.loads(clean_text)
             
             if not player_data:
                 st.error("🤖 AI가 일시적으로 불안정한 데이터를 응답했습니다. 잠시 후 다시 검색해 주세요.")
@@ -131,58 +142,58 @@ if search_query:
                     st.header(player_data.get("name_ko", search_query))
                     st.markdown(f"**🌐 국적:** {player_data.get('nationality', '정보 없음')}")
                     
-                    # 주요 Metric 대시보드
-                    sub_col1, sub_col2 = st.columns(2)
-                    sub_col1.metric(label="🎂 나이 / 생년월일", value=player_data.get("age", "정보 없음"))
-                    sub_col2.metric(label="🥅 통산 골 수", value=player_data.get("total_goals", "정보 없음"))
-                    st.divider()
+                # 주요 Metric 대시보드
+                sub_col1, sub_col2 = st.columns(2)
+                sub_col1.metric(label="🎂 나이 / 생년월일", value=player_data.get("age", "정보 없음"))
+                sub_col2.metric(label="🥅 통산 골 수", value=player_data.get("total_goals", "정보 없음"))
+                st.divider()
 
-                    # 3. 탭 구성
-                    tab1, tab2, tab3 = st.tabs(["📝 선수 요약 및 수상", "🛡️ 클럽 커리어", "📺 최고의 순간 영상"])
+                # 3. 탭 구성
+                tab1, tab2, tab3 = st.tabs(["📝 선수 요약 및 수상", "🛡️ 클럽 커리어", "📺 최고의 순간 영상"])
+                
+                with tab1:
+                    st.subheader("선수 소개")
+                    st.write(player_data.get("summary", "소개 정보가 없습니다."))
+                    st.divider()
                     
-                    with tab1:
-                        st.subheader("선수 소개")
-                        st.write(player_data.get("summary", "소개 정보가 없습니다."))
-                        st.divider()
-                        
-                        ind_awards = player_data.get("individual_awards", [])
-                        club_awards = player_data.get("club_awards", [])
-                        
-                        a_col1, a_col2 = st.columns(2)
-                        with a_col1:
-                            st.subheader("🏅 개인 수상 기록")
-                            if ind_awards and isinstance(ind_awards, list):
-                                for award in ind_awards:
-                                    st.markdown(f"- {award}")
-                            else:
-                                st.write("개인 수상 정보가 없습니다.")
-                                
-                        with a_col2:
-                            st.subheader("🏆 클럽 수상 기록")
-                            if club_awards and isinstance(club_awards, list):
-                                for award in club_awards:
-                                    st.markdown(f"- {award}")
-                            else:
-                                st.write("클럽 수상 정보가 없습니다.")
-                            
-                    with tab2:
-                        st.subheader("⚽ 소속팀 커리어 히스토리")
-                        clubs = player_data.get("career_clubs", "정보 없음")
-                        st.info(clubs)
-                        
-                    with tab3:
-                        st.subheader("📺 AI가 추천하는 최고의 플레이")
-                        video_id = player_data.get("best_moments_youtube_id")
-                        
-                        search_keyword = player_data.get('wiki_en_title', search_query)
-                        search_url = f"https://www.youtube.com/results?search_query={search_keyword}+best+moments+highlights"
-                        
-                        if video_id and check_youtube_video(video_id):
-                            st.video(f"https://www.youtube.com/watch?v={video_id}")
-                            st.markdown(f"💡 영상이 안 나오나요? 👉 [**YouTube에서 직접 검색하기**]({search_url})")
+                    ind_awards = player_data.get("individual_awards", [])
+                    club_awards = player_data.get("club_awards", [])
+                    
+                    a_col1, a_col2 = st.columns(2)
+                    with a_col1:
+                        st.subheader("🏅 개인 수상 기록")
+                        if ind_awards and isinstance(ind_awards, list):
+                            for award in ind_awards:
+                                st.markdown(f"- {award}")
                         else:
-                            st.warning("⚠️ 특정 동영상을 직접 가져오는 데 실패했습니다. 아래 안전한 유튜브 링크를 통해 하이라이트를 바로 감상해보세요!")
-                            st.markdown(f"👉 [**YouTube에서 '{player_data.get('name_ko', search_query)} 하이라이트' 보기**]({search_url})")
+                            st.write("개인 수상 정보가 없습니다.")
+                            
+                    with a_col2:
+                        st.subheader("🏆 클럽 수상 기록")
+                        if club_awards and isinstance(club_awards, list):
+                            for award in club_awards:
+                                st.markdown(f"- {award}")
+                        else:
+                            st.write("클럽 수상 정보가 없습니다.")
+                            
+                with tab2:
+                    st.subheader("⚽ 소속팀 커리어 히스토리")
+                    clubs = player_data.get("career_clubs", "정보 없음")
+                    st.info(clubs)
+                    
+                with tab3:
+                    st.subheader("📺 AI가 추천하는 최고의 플레이")
+                    video_id = player_data.get("best_moments_youtube_id")
+                    
+                    search_keyword = player_data.get('wiki_en_title', search_query)
+                    search_url = f"https://www.youtube.com/results?search_query={search_keyword}+best+moments+highlights"
+                    
+                    if video_id and check_youtube_video(video_id):
+                        st.video(f"https://www.youtube.com/watch?v={video_id}")
+                        st.markdown(f"💡 영상이 안 나오나요? 👉 [**YouTube에서 직접 검색하기**]({search_url})")
+                    else:
+                        st.warning("⚠️ 특정 동영상을 직접 가져오는 데 실패했습니다. 아래 안전한 유튜브 링크를 통해 하이라이트를 바로 감상해보세요!")
+                        st.markdown(f"👉 [**YouTube에서 '{player_data.get('name_ko', search_query)} 하이라이트' 보기**]({search_url})")
                             
         except json.JSONDecodeError:
             st.error("🤖 AI가 JSON 규격을 맞추지 못했습니다. 다시 시도해 주세요.")

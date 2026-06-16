@@ -24,8 +24,6 @@ if not api_key:
 
 # Gemini API 구성
 genai.configure(api_key=api_key)
-# 빠르고 가벼우며 비용 효율적인 gemini-2.5-flash-lite 모델 사용
-model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
 # ==========================================
 # 3. 안정성을 위한 보조 함수들 (예외 처리 포함)
@@ -33,8 +31,9 @@ model = genai.GenerativeModel('gemini-2.5-flash-lite')
 @st.cache_data(show_spinner=False)
 def get_wiki_image(wiki_title):
     """위키피디아 영문 페이지 제목을 기반으로 메인 프로필 이미지를 가져옵니다."""
+    default_img = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png"
     if not wiki_title:
-        return "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png"
+        return default_img
         
     url = "https://en.wikipedia.org/w/api.php"
     params = {
@@ -55,8 +54,7 @@ def get_wiki_image(wiki_title):
     except Exception:
         pass
     
-    # 에러 발생 시 기본 이미지 반환 (앱이 멈추는 것을 방지)
-    return "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/600px-No_image_available.svg.png"
+    return default_img
 
 @st.cache_data(show_spinner=False)
 def check_youtube_video(video_id):
@@ -70,28 +68,6 @@ def check_youtube_video(video_id):
     except Exception:
         return False
 
-def extract_json(text):
-    """AI 텍스트 출력물에서 순수 JSON 데이터만 안전하게 추출합니다."""
-    try:
-        # ```json ... ``` 형태 안의 문자열 추출 시도
-        match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
-        if match:
-            return json.loads(match.group(1))
-        
-        # 일반 백틱 ``` ... ``` 형태 추출 시도
-        match_general = re.search(r'```\s*(\{.*?\})\s*```', text, re.DOTALL)
-        if match_general:
-            return json.loads(match_general.group(1))
-            
-        # 백틱이 없는 경우 중괄호 시작과 끝을 찾아 파싱 시도
-        match_braces = re.search(r'(\{.*\})', text, re.DOTALL)
-        if match_braces:
-            return json.loads(match_braces.group(1))
-            
-        return json.loads(text)
-    except Exception:
-        return None
-
 # ==========================================
 # 4. 메인 UI 화면 구성
 # ==========================================
@@ -99,19 +75,20 @@ st.title("⚽ 글로벌 축구선수 종합 리포트 및 하이라이트")
 st.markdown("전 세계 어느 축구선수든 이름을 검색하면 **프로필, 스탯, 수상 기록**과 **최고의 순간 동영상**을 바로 확인할 수 있습니다.")
 st.divider()
 
-# 검색창 입력 (엔터를 치거나 버튼을 누르면 작동)
+# 검색창 입력
 search_query = st.text_input("🔍 축구선수 이름을 입력하세요 (예: 손흥민, 이강인, Lionel Messi, Pele)", placeholder="선수 이름 입력 후 Enter")
 
 if search_query:
     with st.spinner(f"'{search_query}' 선수의 데이터를 종합 분석 중입니다..."):
         
-        # 엄격한 JSON 반환 유도를 위한 프롬프트 고도화
+        # 엄격한 JSON 스키마 가이드 및 프롬프트
         prompt = f"""
-        당신은 전 세계 축구선수 데이터베이스 전문가입니다. '{search_query}'에 대한 정확한 정보를 검색하여 반드시 제공된 JSON 형식으로만 응답하세요.
-        축구선수가 아니거나 정보를 완전히 찾을 수 없다면 {{"error": "not_found"}} 만 반환하세요.
+        당신은 전 세계 축구선수 데이터베이스 전문가입니다. '{search_query}'에 대한 정확한 정보를 검색하여 제공된 JSON 형식으로 응답하세요.
+        축구선수가 아니거나 정보를 완전히 찾을 수 없다면 {{"error": "not_found"}} 라고만 채워서 반환해야 합니다.
         
-        응답은 반드시 아래의 key를 가진 완벽한 JSON 형태여야 합니다:
+        반드시 아래 key 구조를 지켜야 합니다:
         {{
+            "error": "선수를 찾았다면 빈문자열 '', 못 찾았다면 'not_found'",
             "name_ko": "선수의 한국어 지정 이름",
             "wiki_en_title": "선수의 정확한 영문 위키피디아 문서 제목 (예: Son Heung-min, Lionel Messi)",
             "nationality": "국적",
@@ -121,24 +98,31 @@ if search_query:
             "summary": "선수 스타일 및 업적 요약 (한국어, 2~3줄)",
             "individual_awards": ["주요 개인 수상 기록 1", "주요 개인 수상 기록 2"],
             "club_awards": ["주요 클럽 우승 기록 1", "주요 클럽 우승 기록 2"],
-            "best_moments_youtube_id": "선수의 하이라이트 유튜브 영상의 11자리 비디오 ID (예: '_mD55J7O7sU'). 신뢰할 수 있는 ID가 없다면 빈 문자열"
+            "best_moments_youtube_id": "선수의 확실한 하이라이트 유튜브 영상 11자리 ID. 확실하지 않다면 빈 문자열"
         }}
         """
         
         try:
-            # AI 모델 호출
+            # 설정 핵심: response_mime_type을 지정하여 무조건 JSON 구조로만 출력되게 강제합니다.
+            model = genai.GenerativeModel(
+                'gemini-2.5-flash-lite',
+                generation_config={"response_mime_type": "application/json"}
+            )
+            
             response = model.generate_content(prompt)
-            player_data = extract_json(response.text)
+            player_data = json.loads(response.text) # 정규식 없이 바로 json.loads 가능!
             
             if not player_data:
                 st.error("🤖 AI가 일시적으로 불안정한 데이터를 응답했습니다. 잠시 후 다시 검색해 주세요.")
+                
             elif player_data.get("error") == "not_found":
                 st.warning("❌ 해당 이름의 축구선수 정보를 찾을 수 없습니다. 이름이나 스펠링을 다시 확인해 주세요.")
+                
             else:
                 # 1. 위키피디아 이미지 URL 가져오기
                 image_url = get_wiki_image(player_data.get("wiki_en_title"))
                 
-                # 2. 화면 레이아웃 분할 (좌측: 프로필 사진 / 우측: 스탯 및 상세정보)
+                # 2. 화면 레이아웃 분할
                 col1, col2 = st.columns([1, 2.2])
                 
                 with col1:
@@ -154,13 +138,12 @@ if search_query:
                     sub_col2.metric(label="🥅 통산 골 수", value=player_data.get("total_goals", "정보 없음"))
                     st.divider()
 
-                    # 3. 탭 구성 (정보 요약, 커리어/수상, 동영상 하이라이트)
+                    # 3. 탭 구성
                     tab1, tab2, tab3 = st.tabs(["📝 선수 요약 및 수상", "🛡️ 클럽 커리어", "📺 최고의 순간 영상"])
                     
                     with tab1:
                         st.subheader("선수 소개")
                         st.write(player_data.get("summary", "소개 정보가 없습니다."))
-                        
                         st.divider()
                         
                         ind_awards = player_data.get("individual_awards", [])
@@ -192,15 +175,17 @@ if search_query:
                         st.subheader("📺 AI가 추천하는 최고의 플레이")
                         video_id = player_data.get("best_moments_youtube_id")
                         
+                        search_keyword = player_data.get('wiki_en_title', search_query)
+                        search_url = f"https://www.youtube.com/results?search_query={search_keyword}+best+moments+highlights"
+                        
                         if video_id and check_youtube_video(video_id):
-                            # 유효한 비디오 ID인 경우 정상 재생
                             st.video(f"https://www.youtube.com/watch?v={video_id}")
+                            st.markdown(f"💡 영상이 안 나오나요? 👉 [**YouTube에서 직접 검색하기**]({search_url})")
                         else:
-                            # 유효하지 않거나 비어있는 경우, 검색 대체 링크 제공 (에러 방지 핵심)
-                            search_keyword = player_data.get('wiki_en_title', search_query)
-                            search_url = f"https://www.youtube.com/results?search_query={search_keyword}+best+moments+highlights"
-                            st.warning("⚠️ 특정 동영상을 직접 재생할 수 없습니다. 대신 안전하게 찾아보실 수 있도록 유튜브 검색 링크를 제공합니다.")
-                            st.markdown(f"👉 [**YouTube에서 '{player_data.get('name_ko')} 하이라이트' 직접 보기**]({search_url})")
+                            st.warning("⚠️ 특정 동영상을 직접 가져오는 데 실패했습니다. 아래 안전한 유튜브 링크를 통해 하이라이트를 바로 감상해보세요!")
+                            st.markdown(f"👉 [**YouTube에서 '{player_data.get('name_ko', search_query)} 하이라이트' 보기**]({search_url})")
                             
+        except json.JSONDecodeError:
+            st.error("🤖 AI가 JSON 규격을 맞추지 못했습니다. 다시 시도해 주세요.")
         except Exception as e:
-            st.error(f"데이터를 처리하는 도중 예상치 못한 오류가 발생했습니다. 잠시 후 다시 시도해 주세요. (오류 내용: {e})")
+            st.error(f"데이터를 처리하는 도중 예상치 못한 오류가 발생했습니다. (오류 내용: {e})")

@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
-import google.generativeai as genai
+# 1. 패키지명을 최신 SDK인 google-genai 규격에 맞게 가져옵니다.
+from google import genai
 
 # ==========================================
 # 1. 페이지 설정 (다중 페이지 에러 방어)
@@ -167,11 +168,9 @@ def main():
                     if not api_key:
                         st.error("⚠️ Secrets에 `GEMINI_API_KEY`가 설정되지 않았습니다.")
                         st.stop()
-                        
-                    genai.configure(api_key=api_key)
                     
-                    # Gemini 2.5 Flash Lite 모델 설정
-                    model = genai.GenerativeModel('gemini-2.5-flash-lite')
+                    # 2. 최신 SDK 방식에 맞춰 클라이언트를 초기화합니다.
+                    client = genai.Client(api_key=api_key)
                     
                     prompt = f"""
                     당신은 전문적이고 따뜻한 시간 관리 코치입니다.
@@ -182,7 +181,12 @@ def main():
                     """
                     
                     with st.spinner("AI가 맞춤형 조언을 생성 중입니다..."):
-                        response = model.generate_content(prompt)
+                        # 3. 최신 SDK의 호출 표준 양식으로 변경했습니다.
+                        # (gemini-2.5-flash 모델을 권장하여 사용합니다.)
+                        response = client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=prompt
+                        )
                         st.success("코칭 완료!")
                         st.markdown(f"> {response.text}")
                         
